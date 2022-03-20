@@ -57,7 +57,7 @@ def update_kmeans_parameters(data, mu_old):
     return losses, assignments, np.nan_to_num(mu)
 
 
-def preprocess_image(original_image):
+def preprocess_image(original_image,dim=1):
     """preprocess the image. 
     vectorize the three matrices (each matrix corresponds to a RGB color channel). **don't normalize!** 
     
@@ -67,14 +67,14 @@ def preprocess_image(original_image):
         processed_image: numpy array of shape (480*480, 3)
     """
     processed_image = original_image.reshape(
-        (original_image.shape[0] * original_image.shape[1], 3))
+        (original_image.shape[0] * original_image.shape[1], dim))
     processed_image = processed_image.astype(float)
     print(
         "Current image: the shape of image={s}, the data type={dt}.".format(
             s=processed_image.shape, dt=processed_image.dtype))
     return processed_image
 
-def kmean_compression(original_image, processed_image, k=3, max_iters=100, threshold=1e-7):
+def kmean_compression(original_image, k=3, max_iters=100, threshold=1e-7):
     """using k-means for image compression.
     Args: 
         original_image: numpy array of shape (480, 480, 3).
@@ -111,5 +111,5 @@ def kmean_compression(original_image, processed_image, k=3, max_iters=100, thres
         # update mu
         mu_old = mu
 
-    image_reconstruct = mu[assignments].reshape(original_image.shape)
+    image_reconstruct = mu[assignments].reshape(original_image.shape).astype(np.uint8)
     return image_reconstruct
