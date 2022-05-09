@@ -22,6 +22,48 @@ def zero_crossing(img,tr=0):
                 zero_crossing[i,j] = 1
     return zero_crossing
 
+
+def fast_LoG(img, sigma=1, tr=150):
+    gaussian = cv2.GaussianBlur(img,(0,0),sigma)
+    log = cv2.Laplacian(gaussian, cv2.CV_64F)
+    edge_mask = fast_zero_crossing(log,tr)
+    return edge_mask
+
+def fast_zero_crossing(img,tr=0):
+    sign_shift_hor = np.zeros(img.shape,dtype=np.float32)
+    sign_shift_ver = np.zeros(img.shape,dtype=np.float32)
+    abs_diff_hor = np.zeros(img.shape,dtype=np.float32)
+    abs_diff_ver = np.zeros(img.shape,dtype=np.float32)
+    img_height = img.shape[0]
+    img_width = img.shape[1]
+    
+    # Get sign shifts and combine
+    sign_shift_hor[img > 0] = 1
+    sign_shift_ver[img > 0] = 1
+    
+    sign_shift_hor[:,1:img_width] = np.abs(sign_shift_hor[:,1:img_width] - sign_shift_hor[:,0:img_width-1])
+    sign_shift_ver[1:img_height,:] = np.abs(sign_shift_ver[1:img_height,:] - sign_shift_ver[0:img_height-1,:])
+    
+    sign_shift = sign_shift_hor + sign_shift_ver
+    
+    # Get absolute difference
+    abs_diff_hor[:,1:img_width] = np.abs(img[:,1:img_width] - img[:,0:img_width-1])
+    abs_diff_ver[1:img_height,:] = np.abs(img[1:img_height,:] - img[0:img_height-1,:])
+        
+    # Threshold the differences and combine
+    abs_diff_hor[abs_diff_hor < tr] = 0
+    abs_diff_hor[abs_diff_hor >= tr] = 1
+    abs_diff_ver[abs_diff_ver < tr] = 0
+    abs_diff_ver[abs_diff_ver >= tr] = 1
+    
+    abs_diff = abs_diff_hor + abs_diff_ver
+    abs_diff[abs_diff > 0] = 1
+    
+    # Use sign shift mask and get final zero crossings
+    abs_diff[sign_shift <= 0] = 0
+    
+    return abs_diff
+
 def sobel_filter(img,balance=0.2):
     grad_x = cv2.Sobel(img, cv2.CV_64F, 1, 0, ksize=3)
     grad_y = cv2.Sobel(img, cv2.CV_64F, 0, 1, ksize=3)
