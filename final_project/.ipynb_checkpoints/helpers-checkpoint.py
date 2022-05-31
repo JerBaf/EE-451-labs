@@ -4,6 +4,8 @@ import k_means
 from scipy.fft import fft, ifft
 import matplotlib.pyplot as plt
 import scipy.signal as signal
+from skimage.color import rgb2gray
+from sklearn import cluster
 
 
 #HELPERS
@@ -429,3 +431,28 @@ def extract_top_cards(table_segmentation, table_canny):
                                        left_boundary + 250:right_boundary + 250])
             
     return cards
+
+def find_chips(chips, r_min=20, r_max=100):
+    all_chips = chips.copy() 
+    
+    gray = cv2.cvtColor(all_chips, cv2.COLOR_BGR2GRAY)
+    gray = cv2.medianBlur(gray, 5)
+    circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, 1, r_min, param1=80, param2=40, minRadius=r_min, maxRadius=r_max)
+    
+    masks = []
+    if circles is not None:
+        circles = np.uint16(np.around(circles))
+        for i in circles[0, :]:
+            one_chip = chips.copy()
+            center = (i[0], i[1])
+            radius = i[2]
+            cv2.circle(all_chips, center, radius, (0, 0, 0), thickness=-1)
+            cv2.circle(one_chip, center, radius, (0, 0, 0), thickness=-1)
+            gray_chip = rgb2gray(one_chip)
+            mask = (gray_chip < 0.0001).astype(int)
+            masks.append(mask)
+
+    gray2 = rgb2gray(all_chips)
+    big_mask = (gray2 < 0.0001)
+    
+    return big_mask, masks
