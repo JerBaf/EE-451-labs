@@ -456,3 +456,21 @@ def find_chips(chips, r_min=20, r_max=100):
     big_mask = (gray2 < 0.0001)
     
     return big_mask, masks
+
+def get_chip_labels(table_segmentation, plot=False):
+    chips = table_segmentation[1000:2600,950:2600]
+    big_mask, masks = find_chips(chips, r_min=70, r_max=140)
+    chip_labels = []
+    if chips[(big_mask == 1)].size > 0:
+        g = cluster.KMeans(n_clusters=5).fit(chips[(big_mask == 1)])
+        for msk in masks:
+            pred = g.predict(chips[msk == 1])
+            chips3 = chips.copy()
+            chips3[msk == 0] = 0
+            if plot:
+                plt.imshow(chips3)
+                plt.show()
+            labels = np.array([(pred==0).sum(), (pred==1).sum(), (pred==2).sum(), (pred==3).sum(), (pred==4).sum()])
+            chip_label = np.argmax(labels)
+            chip_labels.append(chip_label)
+    return chip_labels
