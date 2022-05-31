@@ -244,3 +244,188 @@ def get_fourier_descriptors(im,n=2):
     imaginary_contour = complex_contour(im)
     fourier_coeffs = fft(imaginary_contour)
     return fourier_coeffs[1:n+1]
+
+def segment_table(path):
+    reduction_factor = 30 #30
+    table_im_big = cv2.imread(path)
+    target_size = (int(table_im_big.shape[1]/reduction_factor),
+                   int(table_im_big.shape[0]/reduction_factor))
+    table_im = cv2.resize(table_im_big,target_size)
+    
+    gray_sobel = cv2.cvtColor(sobel_filter(table_im,balance=1), cv2.COLOR_BGR2GRAY)
+    log = LoG(gray_sobel,sigma=1,tr=20)
+    
+    ### Detect center
+    kernel = np.ones((7,7))
+    inverse_log = -log + 1
+    start_mask = cv2.morphologyEx(inverse_log, cv2.MORPH_OPEN, kernel)
+    x_center, y_center = start_mask.shape[0]/2,start_mask.shape[1]/2
+    start_indices = zip(np.where(start_mask == 1)[0],np.where(start_mask == 1)[1])
+    start = sorted(start_indices,key=lambda l: np.power((l[0]-x_center,l[1]-y_center),2).sum())[0]
+    
+    ### Segment table
+    kernel = np.ones((3,3))
+    inverse_log = cv2.morphologyEx(inverse_log, cv2.MORPH_OPEN, kernel)
+    segmentation = np.zeros(inverse_log.shape,dtype=np.uint8)
+    for i in iterative_grow(inverse_log,start[0],start[1],0.5):
+        segmentation[i[0],i[1]] = 255
+    corners = retrieve_corners_alt(segmentation)
+    table_segmentation = extract_table_alt(table_im_big,corners,reduction_factor)
+
+    return table_segmentation
+
+def extract_T_cards(table_segmentation, table_canny):
+    table_rotated = cv2.rotate(table_segmentation, cv2.cv2.ROTATE_90_CLOCKWISE)
+    canny = table_canny
+    
+    # Params
+    bottom_boundary = 2600
+    T = 500
+    horizontal_buffer = 50
+    vertical_buffer = 50
+
+    # Cut out bottom of image with supposed right-cards
+    T_cards = table_segmentation[bottom_boundary:-1,:]
+    canny = canny[bottom_boundary:-1,:]    
+
+    # Get card boundaries
+    cards_horizontal_sum = np.sum(canny, axis=0)
+    left_boundary = np.min(np.where(cards_horizontal_sum > T)) - horizontal_buffer
+    right_boundary = np.max(np.where(cards_horizontal_sum > T)) + horizontal_buffer
+    diff = right_boundary - left_boundary
+    split = int(diff/5)
+
+    # Separate cards roughly
+    cards = []
+    for i in range(5):
+        cur_low = left_boundary + i*split
+        cur_high = cur_low + split
+        canny_cut = canny[:,cur_low:cur_high]
+        canny_vertical_sum = np.sum(canny_cut, axis=1)
+        upper_boundary = np.min(np.where(canny_vertical_sum > T)) - vertical_buffer
+        lower_boundary = np.max(np.where(canny_vertical_sum > T)) + vertical_buffer
+        if upper_boundary < 0:
+            upper_boundary = 0
+        if lower_boundary > canny_cut.shape[0]:
+            lower_boundary = canny_cut.shape[0]
+        cards.append(T_cards[upper_boundary:lower_boundary,cur_low:cur_high])
+        
+    return cards
+
+def extract_right_cards(table_segmentation, table_canny):
+    table_rotated = cv2.rotate(table_segmentation, cv2.cv2.ROTATE_90_CLOCKWISE)
+    canny = cv2.rotate(table_canny, cv2.cv2.ROTATE_90_CLOCKWISE)
+    
+    # Params
+    bottom_boundary = 2600
+    T = 500
+    horizontal_buffer = 50
+    vertical_buffer = 50
+
+    # Cut out bottom of image with supposed right-cards
+    right_cards = table_rotated[bottom_boundary:-1,1100:2300]
+    canny = canny[bottom_boundary:-1,1100:2300]
+
+    # Get card boundaries
+    cards_horizontal_sum = np.sum(canny, axis=0)
+    left_boundary = np.min(np.where(cards_horizontal_sum > T)) - horizontal_buffer
+    right_boundary = np.max(np.where(cards_horizontal_sum > T)) + horizontal_buffer
+    if left_boundary < 0:
+        left_boundary = 0
+    if right_boundary > canny.shape[1]:
+        right_boundary = canny.shape[1]
+
+    # Exctract cards roughly
+    cards = []
+    canny = canny[:,left_boundary:right_boundary]
+    canny_vertical_sum = np.sum(canny, axis=1)
+    upper_boundary = np.min(np.where(canny_vertical_sum > T)) - vertical_buffer
+    lower_boundary = np.max(np.where(canny_vertical_sum > T)) + vertical_buffer
+    if upper_boundary < 0:
+        upper_boundary = 0
+    if lower_boundary > canny.shape[0]:
+        lower_boundary = canny.shape[0]
+    cards.append(right_cards[upper_boundary:lower_boundary,left_boundary:right_boundary])
+    
+    return cards
+
+def extract_left_cards(table_segmentation, table_canny):
+    table_rotated = cv2.rotate(table_segmentation, cv2.cv2.ROTATE_90_COUNTERCLOCKWISE)
+    canny = cv2.rotate(table_canny, cv2.cv2.ROTATE_90_COUNTERCLOCKWISE)
+    
+    # Params
+    bottom_boundary = 2600
+    T = 500
+    horizontal_buffer = 50
+    vertical_buffer = 50
+
+    # Cut out bottom of image with supposed right-cards
+    left_cards = table_rotated[bottom_boundary:-1,1100:2300]
+    canny = canny[bottom_boundary:-1,1100:2300]
+    
+    # Get card boundaries
+    cards_horizontal_sum = np.sum(canny, axis=0)
+    left_boundary = np.min(np.where(cards_horizontal_sum > T)) - horizontal_buffer
+    right_boundary = np.max(np.where(cards_horizontal_sum > T)) + horizontal_buffer
+    if left_boundary < 0:
+        left_boundary = 0
+    if right_boundary > canny.shape[1]:
+        right_boundary = canny.shape[1]
+
+    # Exctract cards roughly
+    cards = []
+    canny = canny[:,left_boundary:right_boundary]
+    canny_vertical_sum = np.sum(canny, axis=1)
+    upper_boundary = np.min(np.where(canny_vertical_sum > T)) - vertical_buffer
+    lower_boundary = np.max(np.where(canny_vertical_sum > T)) + vertical_buffer
+    if upper_boundary < 0:
+        upper_boundary = 0
+    if lower_boundary > canny.shape[0]:
+        lower_boundary = canny.shape[0]
+    cards.append(left_cards[upper_boundary:lower_boundary,left_boundary:right_boundary])
+    
+    return cards
+
+def extract_top_cards(table_segmentation, table_canny):
+    table_rotated = cv2.rotate(table_segmentation, cv2.cv2.ROTATE_180)
+    canny = cv2.rotate(table_canny, cv2.cv2.ROTATE_180)
+    sides = [canny[:,0:int(canny.shape[1]/2)], canny[:,int(canny.shape[1]/2):-1]]
+
+    # Params
+    bottom_boundary = 2625
+    T = 500
+    horizontal_buffer = 50
+    vertical_buffer = 50
+
+    cards = []
+    for idx, side in enumerate(sides):
+        # Cut out bottom of image with supposed right-cards
+        card_im = side[bottom_boundary:-1,250:1300]
+
+        # Get card boundaries
+        cards_horizontal_sum = np.sum(card_im, axis=0)
+        left_boundary = np.min(np.where(cards_horizontal_sum > T)) - horizontal_buffer
+        right_boundary = np.max(np.where(cards_horizontal_sum > T)) + horizontal_buffer
+        if left_boundary < 0:
+            left_boundary = 0
+        if right_boundary > card_im.shape[1]:
+            right_boundary = card_im.shape[1]
+
+        # Exctract cards roughly
+        cards_vertical_sum = np.sum(card_im, axis=1)
+        upper_boundary = np.min(np.where(cards_vertical_sum > T)) - vertical_buffer
+        lower_boundary = np.max(np.where(cards_vertical_sum > T)) + vertical_buffer
+        if upper_boundary < 0:
+            upper_boundary = 0
+        if lower_boundary > card_im.shape[0]:
+            lower_boundary = card_im.shape[0]
+
+        if idx == 1:
+            shift_x = int(canny.shape[1]/2)
+            cards.append(table_rotated[upper_boundary + bottom_boundary:lower_boundary + bottom_boundary,
+                                       left_boundary + shift_x + 250:right_boundary + shift_x + 250])
+        else:
+            cards.append(table_rotated[upper_boundary + bottom_boundary:lower_boundary + bottom_boundary,
+                                       left_boundary + 250:right_boundary + 250])
+            
+    return cards

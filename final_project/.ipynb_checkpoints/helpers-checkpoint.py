@@ -1,5 +1,9 @@
 import cv2
 import numpy as np
+import k_means
+from scipy.fft import fft, ifft
+import matplotlib.pyplot as plt
+import scipy.signal as signal
 
 
 #HELPERS
@@ -21,48 +25,6 @@ def zero_crossing(img,tr=0):
             if local_min < 0 and local_max > 0 and (local_max - local_min) > tr:
                 zero_crossing[i,j] = 1
     return zero_crossing
-
-
-def fast_LoG(img, sigma=1, tr=150):
-    gaussian = cv2.GaussianBlur(img,(0,0),sigma)
-    log = cv2.Laplacian(gaussian, cv2.CV_64F)
-    edge_mask = fast_zero_crossing(log,tr)
-    return edge_mask
-
-def fast_zero_crossing(img,tr=0):
-    sign_shift_hor = np.zeros(img.shape,dtype=np.float32)
-    sign_shift_ver = np.zeros(img.shape,dtype=np.float32)
-    abs_diff_hor = np.zeros(img.shape,dtype=np.float32)
-    abs_diff_ver = np.zeros(img.shape,dtype=np.float32)
-    img_height = img.shape[0]
-    img_width = img.shape[1]
-    
-    # Get sign shifts and combine
-    sign_shift_hor[img > 0] = 1
-    sign_shift_ver[img > 0] = 1
-    
-    sign_shift_hor[:,1:img_width] = np.abs(sign_shift_hor[:,1:img_width] - sign_shift_hor[:,0:img_width-1])
-    sign_shift_ver[1:img_height,:] = np.abs(sign_shift_ver[1:img_height,:] - sign_shift_ver[0:img_height-1,:])
-    
-    sign_shift = sign_shift_hor + sign_shift_ver
-    
-    # Get absolute difference
-    abs_diff_hor[:,1:img_width] = np.abs(img[:,1:img_width] - img[:,0:img_width-1])
-    abs_diff_ver[1:img_height,:] = np.abs(img[1:img_height,:] - img[0:img_height-1,:])
-        
-    # Threshold the differences and combine
-    abs_diff_hor[abs_diff_hor < tr] = 0
-    abs_diff_hor[abs_diff_hor >= tr] = 1
-    abs_diff_ver[abs_diff_ver < tr] = 0
-    abs_diff_ver[abs_diff_ver >= tr] = 1
-    
-    abs_diff = abs_diff_hor + abs_diff_ver
-    abs_diff[abs_diff > 0] = 1
-    
-    # Use sign shift mask and get final zero crossings
-    abs_diff[sign_shift <= 0] = 0
-    
-    return abs_diff
 
 def sobel_filter(img,balance=0.2):
     grad_x = cv2.Sobel(img, cv2.CV_64F, 1, 0, ksize=3)
@@ -94,6 +56,28 @@ def retrieve_corners_opt(mask):
     bot = (indices[0][bot_idx[1]],indices[1][bot_idx[1]])
     left = (indices[0][left_idx[1]],indices[1][left_idx[1]])
     return (top, right, bot, left)
+
+def retrieve_corners_alt(mask):
+    indices = np.where(mask > 0)
+    bot_sort = sorted(zip(indices[0],range(indices[0].shape[0])),key=lambda l: l[0])
+    right_sort = sorted(zip(indices[1],range(indices[0].shape[0])),key=lambda l: l[0])
+    top_idx = bot_sort[0]
+    bot_idx = bot_sort[-1]
+    right_idx = right_sort[-1]
+    left_idx = right_sort[0]
+    y_max = bot_idx[0]
+    y_min = top_idx[0]
+    x_max = right_idx[0]
+    x_min = left_idx[0]
+    return (y_max, y_min, x_max, x_min)
+
+def extract_table_alt(original_im,corners,reduction_factor):
+    y_max, y_min, x_max, x_min = corners
+    y_max = y_max*reduction_factor
+    y_min = y_min*reduction_factor
+    x_max = x_max*reduction_factor
+    x_min = x_min*reduction_factor
+    return original_im[y_min:y_max,x_min:x_max]
 
 def extract_table(original_im,corners,reduction_factor):
     top, right, bot, left = corners
@@ -149,3 +133,299 @@ def iterative_grow(img,x,y,tr):
         else:
             candidate.pop()
     return region
+
+
+def create_k_mean_mask(image):
+    if len(image.shape) > 2: 
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = image
+    compressed_im = k_means.kmean_compression(gray,k=2)
+    mask = np.zeros(compressed_im.shape,dtype=np.uint8)
+    indices_above_mean = np.where(compressed_im > compressed_im.mean())
+    indices_below_mean = np.where(compressed_im <= compressed_im.mean())
+    if indices_above_mean[0].shape[0] > indices_below_mean[0].shape[0]:
+        mask[indices_below_mean] = 255
+    else:
+        mask[indices_above_mean] = 255
+    return mask
+
+def shape_detector(image):
+    im = image.copy()
+    indices = np.where(im > 0)
+    shape_masks = []
+    while indices[0].shape[0] > 0:
+        x,y = indices[0][0],indices[1][0]
+        shape = iterative_grow(im,x,y,0.5)
+        shape_mask = np.zeros(im.shape,dtype=np.uint8)
+        for i in shape:
+            shape_mask[i[0],i[1]] = 255
+            im[i[0],i[1]] = 0
+        # update
+        if len(shape) > 50:
+            print(len(shape))
+            shape_masks.append(shape_mask)
+        indices = np.where(im > 0)
+    return shape_masks
+
+
+
+    ### CONTOURS
+
+directions = np.asarray([[1,-1],[1,1],[-1,1],[-1,-1],[0,-1],[1,0],[0,1],[-1,0]]) # Trigonometric wise
+
+def get_contour(im):
+    """ Apply a linear filter to retrieve the contour points. """
+    contours, _ = cv2.findContours(im, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    contour_mask = np.zeros(im.shape)
+    for i in contours:
+        for j in i:
+            contour_mask[j[0][1],j[0][0]] = 1
+    sharp_contour_mask = sharp_edges(contour_mask)
+    return sharp_contour_mask
+
+def get_ordered_contour(im):
+    """ Get the outer border of a digit. """
+    contour_mask = get_contour(im)
+    point = np.asarray([np.where(contour_mask == 1)[0][0],np.where(contour_mask == 1)[1][0]])
+    contour = set([tuple(point)])
+    id = 0
+    contour_id = [(tuple(point),id)] # will be used to order correctly the contour
+    new_point = True
+    while new_point: 
+        new_point = False
+        for move in directions:
+            candidate = point+move
+            if contour_mask[candidate[0],candidate[1]] == 1 and tuple(candidate) not in contour:
+                new_point = True
+                id += 1
+                contour = contour.union(set([tuple(candidate)]))
+                contour_id.append((tuple(candidate),id))
+                point = candidate
+                break
+    return list(map(lambda l : l[0], sorted(contour_id,key=lambda t : t[1])))
+
+def sharp_edges(im):
+    """ Remove the stairs part in a contour mask. """
+    kernel_left_stairs = np.asarray([[0,1,0],[1,1,0],[0,0,0]]).astype(np.uint8)
+    left_stairs = cv2.morphologyEx(im,
+                                  cv2.MORPH_ERODE,kernel=kernel_left_stairs)
+    kernel_right_stairs = np.asarray([[0,1,0],[0,1,1],[0,0,0]]).astype(np.uint8)
+    right_stairs = cv2.morphologyEx(im-left_stairs,
+                                   cv2.MORPH_ERODE,kernel=kernel_right_stairs)
+    kernel_up_stairs = np.asarray([[0,0,0],[0,1,1],[0,1,0]]).astype(np.uint8)
+    up_stairs = cv2.morphologyEx(im-left_stairs-right_stairs,
+                                cv2.MORPH_ERODE,kernel=kernel_up_stairs)
+    kernel_down_stairs = np.asarray([[0,0,0],[1,1,0],[0,1,0]]).astype(np.uint8)
+    down_stairs = cv2.morphologyEx(im-left_stairs-right_stairs-up_stairs,
+                                  cv2.MORPH_ERODE,kernel=kernel_down_stairs)
+    return im - left_stairs - right_stairs - up_stairs - down_stairs
+
+def complex_contour(im):
+    """ Get the contour of the image in complex number form and ordered. """
+    contour = get_ordered_contour(im)
+    complex_contour = list(map(lambda l: complex(l[0],l[1]), contour))
+    return complex_contour 
+
+def show_contour(im):
+    """ Plot the contour of the digit. """
+    contour = get_ordered_contour(im)
+    mask = np.zeros(im.shape)
+    for pt in contour:
+        mask[pt] = 1
+    fig,ax = plt.subplots(1,2)
+    ax[0].set_title("Digit's Contour")
+    ax[1].set_title("Digit")
+    ax[0].imshow(mask,cmap = 'gray')
+    ax[1].imshow(im,cmap="gray")
+
+def get_fourier_descriptors(im,n=2):
+    """ Compute the fourier descriptors of a digit. """
+    imaginary_contour = complex_contour(im)
+    fourier_coeffs = fft(imaginary_contour)
+    return fourier_coeffs[1:n+1]
+
+def segment_table(path):
+    reduction_factor = 30 #30
+    table_im_big = cv2.imread(path)
+    target_size = (int(table_im_big.shape[1]/reduction_factor),
+                   int(table_im_big.shape[0]/reduction_factor))
+    table_im = cv2.resize(table_im_big,target_size)
+    
+    gray_sobel = cv2.cvtColor(sobel_filter(table_im,balance=1), cv2.COLOR_BGR2GRAY)
+    log = LoG(gray_sobel,sigma=1,tr=20)
+    
+    ### Detect center
+    kernel = np.ones((7,7))
+    inverse_log = -log + 1
+    start_mask = cv2.morphologyEx(inverse_log, cv2.MORPH_OPEN, kernel)
+    x_center, y_center = start_mask.shape[0]/2,start_mask.shape[1]/2
+    start_indices = zip(np.where(start_mask == 1)[0],np.where(start_mask == 1)[1])
+    start = sorted(start_indices,key=lambda l: np.power((l[0]-x_center,l[1]-y_center),2).sum())[0]
+    
+    ### Segment table
+    kernel = np.ones((3,3))
+    inverse_log = cv2.morphologyEx(inverse_log, cv2.MORPH_OPEN, kernel)
+    segmentation = np.zeros(inverse_log.shape,dtype=np.uint8)
+    for i in iterative_grow(inverse_log,start[0],start[1],0.5):
+        segmentation[i[0],i[1]] = 255
+    corners = retrieve_corners_alt(segmentation)
+    table_segmentation = extract_table_alt(table_im_big,corners,reduction_factor)
+
+    return table_segmentation
+
+def extract_T_cards(table_segmentation, table_canny):
+    table_rotated = cv2.rotate(table_segmentation, cv2.cv2.ROTATE_90_CLOCKWISE)
+    canny = table_canny
+    
+    # Params
+    bottom_boundary = 2600
+    T = 500
+    horizontal_buffer = 50
+    vertical_buffer = 50
+
+    # Cut out bottom of image with supposed right-cards
+    T_cards = table_segmentation[bottom_boundary:-1,:]
+    canny = canny[bottom_boundary:-1,:]    
+
+    # Get card boundaries
+    cards_horizontal_sum = np.sum(canny, axis=0)
+    left_boundary = np.min(np.where(cards_horizontal_sum > T)) - horizontal_buffer
+    right_boundary = np.max(np.where(cards_horizontal_sum > T)) + horizontal_buffer
+    diff = right_boundary - left_boundary
+    split = int(diff/5)
+
+    # Separate cards roughly
+    cards = []
+    for i in range(5):
+        cur_low = left_boundary + i*split
+        cur_high = cur_low + split
+        canny_cut = canny[:,cur_low:cur_high]
+        canny_vertical_sum = np.sum(canny_cut, axis=1)
+        upper_boundary = np.min(np.where(canny_vertical_sum > T)) - vertical_buffer
+        lower_boundary = np.max(np.where(canny_vertical_sum > T)) + vertical_buffer
+        if upper_boundary < 0:
+            upper_boundary = 0
+        if lower_boundary > canny_cut.shape[0]:
+            lower_boundary = canny_cut.shape[0]
+        cards.append(T_cards[upper_boundary:lower_boundary,cur_low:cur_high])
+        
+    return cards
+
+def extract_right_cards(table_segmentation, table_canny):
+    table_rotated = cv2.rotate(table_segmentation, cv2.cv2.ROTATE_90_CLOCKWISE)
+    canny = cv2.rotate(table_canny, cv2.cv2.ROTATE_90_CLOCKWISE)
+    
+    # Params
+    bottom_boundary = 2600
+    T = 500
+    horizontal_buffer = 50
+    vertical_buffer = 50
+
+    # Cut out bottom of image with supposed right-cards
+    right_cards = table_rotated[bottom_boundary:-1,1100:2300]
+    canny = canny[bottom_boundary:-1,1100:2300]
+
+    # Get card boundaries
+    cards_horizontal_sum = np.sum(canny, axis=0)
+    left_boundary = np.min(np.where(cards_horizontal_sum > T)) - horizontal_buffer
+    right_boundary = np.max(np.where(cards_horizontal_sum > T)) + horizontal_buffer
+    if left_boundary < 0:
+        left_boundary = 0
+    if right_boundary > canny.shape[1]:
+        right_boundary = canny.shape[1]
+
+    # Exctract cards roughly
+    cards = []
+    canny = canny[:,left_boundary:right_boundary]
+    canny_vertical_sum = np.sum(canny, axis=1)
+    upper_boundary = np.min(np.where(canny_vertical_sum > T)) - vertical_buffer
+    lower_boundary = np.max(np.where(canny_vertical_sum > T)) + vertical_buffer
+    if upper_boundary < 0:
+        upper_boundary = 0
+    if lower_boundary > canny.shape[0]:
+        lower_boundary = canny.shape[0]
+    cards.append(right_cards[upper_boundary:lower_boundary,left_boundary:right_boundary])
+    
+    return cards
+
+def extract_left_cards(table_segmentation, table_canny):
+    table_rotated = cv2.rotate(table_segmentation, cv2.cv2.ROTATE_90_COUNTERCLOCKWISE)
+    canny = cv2.rotate(table_canny, cv2.cv2.ROTATE_90_COUNTERCLOCKWISE)
+    
+    # Params
+    bottom_boundary = 2600
+    T = 500
+    horizontal_buffer = 50
+    vertical_buffer = 50
+
+    # Cut out bottom of image with supposed right-cards
+    left_cards = table_rotated[bottom_boundary:-1,1100:2300]
+    canny = canny[bottom_boundary:-1,1100:2300]
+    
+    # Get card boundaries
+    cards_horizontal_sum = np.sum(canny, axis=0)
+    left_boundary = np.min(np.where(cards_horizontal_sum > T)) - horizontal_buffer
+    right_boundary = np.max(np.where(cards_horizontal_sum > T)) + horizontal_buffer
+    if left_boundary < 0:
+        left_boundary = 0
+    if right_boundary > canny.shape[1]:
+        right_boundary = canny.shape[1]
+
+    # Exctract cards roughly
+    cards = []
+    canny = canny[:,left_boundary:right_boundary]
+    canny_vertical_sum = np.sum(canny, axis=1)
+    upper_boundary = np.min(np.where(canny_vertical_sum > T)) - vertical_buffer
+    lower_boundary = np.max(np.where(canny_vertical_sum > T)) + vertical_buffer
+    if upper_boundary < 0:
+        upper_boundary = 0
+    if lower_boundary > canny.shape[0]:
+        lower_boundary = canny.shape[0]
+    cards.append(left_cards[upper_boundary:lower_boundary,left_boundary:right_boundary])
+    
+    return cards
+
+def extract_top_cards(table_segmentation, table_canny):
+    table_rotated = cv2.rotate(table_segmentation, cv2.cv2.ROTATE_180)
+    canny = cv2.rotate(table_canny, cv2.cv2.ROTATE_180)
+    sides = [canny[:,0:int(canny.shape[1]/2)], canny[:,int(canny.shape[1]/2):-1]]
+
+    # Params
+    bottom_boundary = 2625
+    T = 500
+    horizontal_buffer = 50
+    vertical_buffer = 50
+
+    cards = []
+    for idx, side in enumerate(sides):
+        # Cut out bottom of image with supposed right-cards
+        card_im = side[bottom_boundary:-1,250:1300]
+
+        # Get card boundaries
+        cards_horizontal_sum = np.sum(card_im, axis=0)
+        left_boundary = np.min(np.where(cards_horizontal_sum > T)) - horizontal_buffer
+        right_boundary = np.max(np.where(cards_horizontal_sum > T)) + horizontal_buffer
+        if left_boundary < 0:
+            left_boundary = 0
+        if right_boundary > card_im.shape[1]:
+            right_boundary = card_im.shape[1]
+
+        # Exctract cards roughly
+        cards_vertical_sum = np.sum(card_im, axis=1)
+        upper_boundary = np.min(np.where(cards_vertical_sum > T)) - vertical_buffer
+        lower_boundary = np.max(np.where(cards_vertical_sum > T)) + vertical_buffer
+        if upper_boundary < 0:
+            upper_boundary = 0
+        if lower_boundary > card_im.shape[0]:
+            lower_boundary = card_im.shape[0]
+
+        if idx == 1:
+            shift_x = int(canny.shape[1]/2)
+            cards.append(table_rotated[upper_boundary + bottom_boundary:lower_boundary + bottom_boundary,
+                                       left_boundary + shift_x + 250:right_boundary + shift_x + 250])
+        else:
+            cards.append(table_rotated[upper_boundary + bottom_boundary:lower_boundary + bottom_boundary,
+                                       left_boundary + 250:right_boundary + 250])
+            
+    return cards
