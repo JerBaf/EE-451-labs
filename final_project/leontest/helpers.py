@@ -248,8 +248,9 @@ def get_fourier_descriptors(im,n=2):
     fourier_coeffs = fft(imaginary_contour)
     return fourier_coeffs[1:n+1]
 
-def segment_table(table_im_big):
+def segment_table(path):
     reduction_factor = 30 #30
+    table_im_big = cv2.imread(path)
     target_size = (int(table_im_big.shape[1]/reduction_factor),
                    int(table_im_big.shape[0]/reduction_factor))
     table_im = cv2.resize(table_im_big,target_size)
@@ -463,24 +464,7 @@ def get_brightness(img):
     return measure
 
 
-def get_chips_labels(table_segmentation, plot=False):
-    brightness = get_brightness(table_segmentation)
-    chips = table_segmentation[1300:2500,1100:2500]
-    mask_all, masks = find_chips(chips)
-
-    all_chips = chips.copy()
-    all_chips[mask_all==0] = 0
-
-    g = cluster.KMeans(n_clusters=5).fit(chips[(mask_all == 1)]) 
-
-    for msk in masks:
-        pred = g.predict(chips[msk == 1])
-        one_chip = chips.copy()
-        one_chip[msk == 0] = 0
-        
-    labels = np.array([(pred==0).sum(), (pred==1).sum(), (pred==2).sum(), (pred==3).sum(), (pred==4).sum()])
-    g.cluster_centers_ = np.array([[245., 213., 193.], [64., 38., 21.], [177., 99., 8.], [112., 89., 7.], [64., 43., 131.]])
-    
+def get_chips_labels(table_segmentation, g, brightness, plot=False):
     img = Image.fromarray(table_segmentation)
     img_brightness_obj = ImageEnhance.Brightness(img)
     factor = brightness/get_brightness(table_segmentation) # (1 + brightness/get_brightness(table_segmentation))/2

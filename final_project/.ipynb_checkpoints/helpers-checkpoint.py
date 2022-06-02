@@ -6,9 +6,10 @@ import matplotlib.pyplot as plt
 import scipy.signal as signal
 from skimage.color import rgb2gray
 from sklearn import cluster
+from PIL import Image,ImageEnhance
 
 
-#HELPERS
+# HELPERS
 
 def LoG(img,sigma=1,tr=150):
     gaussian = cv2.GaussianBlur(img,(0,0),sigma)
@@ -247,9 +248,8 @@ def get_fourier_descriptors(im,n=2):
     fourier_coeffs = fft(imaginary_contour)
     return fourier_coeffs[1:n+1]
 
-def segment_table(path):
+def segment_table(table_im_big):
     reduction_factor = 30 #30
-    table_im_big = cv2.imread(path)
     target_size = (int(table_im_big.shape[1]/reduction_factor),
                    int(table_im_big.shape[0]/reduction_factor))
     table_im = cv2.resize(table_im_big,target_size)
@@ -432,12 +432,12 @@ def extract_top_cards(table_segmentation, table_canny):
             
     return cards
 
-def find_chips(chips, r_min=20, r_max=100):
+def find_chips(chips, r_min=120, r_max=130):
     all_chips = chips.copy() 
     
     gray = cv2.cvtColor(all_chips, cv2.COLOR_BGR2GRAY)
     gray = cv2.medianBlur(gray, 5)
-    circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, 1, r_min, param1=80, param2=40, minRadius=r_min, maxRadius=r_max)
+    circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, 1, r_min, param1=85, param2=15, minRadius=r_min, maxRadius=r_max)
     
     masks = []
     if circles is not None:
@@ -457,20 +457,47 @@ def find_chips(chips, r_min=20, r_max=100):
     
     return big_mask, masks
 
-def get_chip_labels(table_segmentation, plot=False):
-    chips = table_segmentation[1000:2600,950:2600]
-    big_mask, masks = find_chips(chips, r_min=70, r_max=140)
-    chip_labels = []
-    if chips[(big_mask == 1)].size > 0:
-        g = cluster.KMeans(n_clusters=5).fit(chips[(big_mask == 1)])
-        for msk in masks:
-            pred = g.predict(chips[msk == 1])
-            chips3 = chips.copy()
-            chips3[msk == 0] = 0
-            if plot:
-                plt.imshow(chips3)
-                plt.show()
-            labels = np.array([(pred==0).sum(), (pred==1).sum(), (pred==2).sum(), (pred==3).sum(), (pred==4).sum()])
-            chip_label = np.argmax(labels)
-            chip_labels.append(chip_label)
-    return chip_labels
+def get_brightness(img):
+    gray_img = rgb2gray(img)
+    measure = np.median(gray_img)
+    return measure
+
+
+def get_chips_labels(table_segmentation, plot=False):
+    brightness = get_brightness(table_segmentation)
+    chips = table_segmentation[1300:2500,1100:2500]
+    mask_all, masks = find_chips(chips)
+
+    all_chips = chips.copy()
+    all_chips[mask_all==0] = 0
+
+    g = cluster.KMeans(n_clusters=5).fit(chips[(mask_all == 1)]) 
+
+    for msk in masks:
+        pred = g.predict(chips[msk == 1])
+        one_chip = chips.copy()
+        one_chip[msk == 0] = 0
+        
+    labels = np.array([(pred==0).sum(), (pred==1).sum(), (pred==2).sum(), (pred==3).sum(), (pred==4).sum()])
+    g.cluster_centers_ = np.array([[245., 213., 193.], [64., 38., 21.], [177., 99., 8.], [112., 89., 7.], [64., 43., 131.]])
+    
+    img = Image.fromarray(table_segmentation)
+    img_brightness_obj = ImageEnhance.Brightness(img)
+    factor = brightness/get_brightness(table_segmentation) # (1 + brightness/get_brightness(table_segmentation))/2
+    enhanced_img = img_brightness_obj.enhance(factor)
+    
+    chips = np.array(enhanced_img)[800:2700,800:2700]
+    mask_all, masks = find_chips(chips)
+    if plot: 
+        plt.imshow(chips)
+        plt.show()
+        all_chips = chips.copy()
+        all_chips[mask_all==0] = 0
+        plt.imshow(all_chips, cmap='gray')
+        plt.show()
+    labels = np.array([])
+    for msk in masks:
+        pred = g.predict(chips[msk == 1])
+        labels = np.append(labels, np.argmax(np.array([(pred==0).sum(), (pred==1).sum(), (pred==2).sum(), (pred==3).sum(), 
+                                                       (pred==4).sum()])))
+    return labels
