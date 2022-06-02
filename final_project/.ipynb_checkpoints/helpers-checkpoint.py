@@ -314,7 +314,38 @@ def extract_T_cards(table_segmentation, table_canny):
         
     return cards
 
-def extract_right_cards(table_segmentation, table_canny):
+def extract_T_cards_wide(table_segmentation, table_canny):
+    table_rotated = cv2.rotate(table_segmentation, cv2.cv2.ROTATE_90_CLOCKWISE)
+    canny = table_canny
+    
+    # Params
+    bottom_boundary = 2600
+    T = 500
+    horizontal_buffer = 50
+    vertical_buffer = 50
+
+    # Cut out bottom of image with supposed right-cards
+    T_cards = table_segmentation[bottom_boundary:-1,:]
+    canny = canny[bottom_boundary:-1,:]    
+
+    cards = []
+    # Get card boundaries
+    cards_horizontal_sum = np.sum(canny, axis=0)
+    left_boundary = np.min(np.where(cards_horizontal_sum > T)) - horizontal_buffer
+    right_boundary = np.max(np.where(cards_horizontal_sum > T)) + horizontal_buffer
+    canny_cut = canny[:,left_boundary:right_boundary]
+    canny_vertical_sum = np.sum(canny_cut, axis=1)
+    upper_boundary = np.min(np.where(canny_vertical_sum > T)) - vertical_buffer
+    lower_boundary = np.max(np.where(canny_vertical_sum > T)) + vertical_buffer
+    if upper_boundary < 0:
+        upper_boundary = 0
+    if lower_boundary > canny_cut.shape[0]:
+        lower_boundary = canny_cut.shape[0]
+    cards.append(T_cards[upper_boundary:lower_boundary,left_boundary:right_boundary])
+        
+    return cards
+
+def extract_right_cards(table_segmentation, table_canny, wide=False, horizontal_buffer_ = 100):
     table_rotated = cv2.rotate(table_segmentation, cv2.cv2.ROTATE_90_CLOCKWISE)
     canny = cv2.rotate(table_canny, cv2.cv2.ROTATE_90_CLOCKWISE)
     
@@ -323,6 +354,9 @@ def extract_right_cards(table_segmentation, table_canny):
     T = 500
     horizontal_buffer = 50
     vertical_buffer = 50
+    
+    if wide:
+        horizontal_buffer = horizontal_buffer_
 
     # Cut out bottom of image with supposed right-cards
     right_cards = table_rotated[bottom_boundary:-1,1100:2300]
@@ -351,7 +385,7 @@ def extract_right_cards(table_segmentation, table_canny):
     
     return cards
 
-def extract_left_cards(table_segmentation, table_canny):
+def extract_left_cards(table_segmentation, table_canny, wide=False, horizontal_buffer_ = 100):
     table_rotated = cv2.rotate(table_segmentation, cv2.cv2.ROTATE_90_COUNTERCLOCKWISE)
     canny = cv2.rotate(table_canny, cv2.cv2.ROTATE_90_COUNTERCLOCKWISE)
     
@@ -360,6 +394,9 @@ def extract_left_cards(table_segmentation, table_canny):
     T = 500
     horizontal_buffer = 50
     vertical_buffer = 50
+    
+    if wide:
+        horizontal_buffer = horizontal_buffer_
 
     # Cut out bottom of image with supposed right-cards
     left_cards = table_rotated[bottom_boundary:-1,1100:2300]
@@ -388,7 +425,7 @@ def extract_left_cards(table_segmentation, table_canny):
     
     return cards
 
-def extract_top_cards(table_segmentation, table_canny):
+def extract_top_cards(table_segmentation, table_canny, wide=False, horizontal_buffer_ = 100):
     table_rotated = cv2.rotate(table_segmentation, cv2.cv2.ROTATE_180)
     canny = cv2.rotate(table_canny, cv2.cv2.ROTATE_180)
     sides = [canny[:,0:int(canny.shape[1]/2)], canny[:,int(canny.shape[1]/2):-1]]
@@ -398,6 +435,9 @@ def extract_top_cards(table_segmentation, table_canny):
     T = 500
     horizontal_buffer = 50
     vertical_buffer = 50
+    
+    if wide:
+        horizontal_buffer = horizontal_buffer_
 
     cards = []
     for idx, side in enumerate(sides):
@@ -461,7 +501,6 @@ def get_brightness(img):
     gray_img = rgb2gray(img)
     measure = np.median(gray_img)
     return measure
-
 
 def get_chips_labels(table_segmentation, plot=False):
     brightness = get_brightness(table_segmentation)
